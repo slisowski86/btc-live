@@ -1,0 +1,468 @@
+[
+  {
+    "entry_long": [
+      {
+        "indicator": "EFISH",
+        "category": "momentum",
+        "direction": "long",
+        "signal_type": "discrete",
+        "method": "cross_above_zero_long"
+      },
+      {
+        "indicator": "LinReg",
+        "category": "trend_direction",
+        "direction": "long",
+        "signal_type": "continuous",
+        "method": "long_regime"
+      },
+      {
+        "indicator": "AROON",
+        "category": "trend_strength",
+        "direction": "long",
+        "signal_type": "continuous",
+        "method": [
+          "strong_trend_regime",
+          "moderate_trend_regime",
+          "weak_trend_regime"
+        ],
+        "base_direction": "both",
+        "tested_as": "long"
+      }
+    ],
+    "exit_long": [
+      {
+        "indicator": "CCIDiv",
+        "category": "divergence",
+        "direction": "short",
+        "signal_type": "discrete",
+        "method": "bearish_signal"
+      },
+      {
+        "indicator": "EIT",
+        "category": "trend_direction",
+        "direction": "short",
+        "signal_type": "continuous",
+        "method": "slope_down_regime"
+      },
+      {
+        "indicator": "ADX",
+        "category": "trend_strength",
+        "direction": "short",
+        "signal_type": "continuous",
+        "method": [
+          "above_level_trend",
+          "below_level_nontrend"
+        ],
+        "base_direction": "both",
+        "tested_as": "short"
+      }
+    ],
+    "entry_short": [
+      {
+        "indicator": "EFISH",
+        "category": "momentum",
+        "direction": "short",
+        "signal_type": "continuous",
+        "method": "above_up_level_short"
+      },
+      {
+        "indicator": "RSI",
+        "category": "momentum",
+        "direction": "short",
+        "signal_type": "discrete",
+        "method": "cross_below_up_level_short"
+      },
+      {
+        "indicator": "DCWidth",
+        "category": "volatility",
+        "direction": "short",
+        "signal_type": "continuous",
+        "method": [
+          "high_volatility_regime",
+          "low_volatility_regime",
+          "medium_volatility_regime"
+        ],
+        "base_direction": "both",
+        "tested_as": "short"
+      }
+    ],
+    "exit_short": [
+      {
+        "indicator": "CCIDiv",
+        "category": "divergence",
+        "direction": "long",
+        "signal_type": "discrete",
+        "method": "bullish_signal"
+      },
+      {
+        "indicator": "EFISH",
+        "category": "momentum",
+        "direction": "long",
+        "signal_type": "continuous",
+        "method": "below_down_level_long"
+      },
+      {
+        "indicator": "ERFilt",
+        "category": "volatility",
+        "direction": "long",
+        "signal_type": "continuous",
+        "method": [
+          "high_volatility_regime",
+          "low_volatility_regime",
+          "medium_volatility_regime"
+        ],
+        "base_direction": "both",
+        "tested_as": "long"
+      }
+    ]
+  },
+  {
+    "entry_long": [
+      {
+        "indicator": "EFISH",
+        "category": "momentum",
+        "direction": "long",
+        "signal_type": "discrete",
+        "method": "cross_above_zero_long"
+      },
+      {
+        "indicator": "LinReg",
+        "category": "trend_direction",
+        "direction": "long",
+        "signal_type": "continuous",
+        "method": "long_regime"
+      },
+      {
+        "indicator": "ADX",
+        "category": "trend_strength",
+        "direction": "short",
+        "signal_type": "continuous",
+        "method": [
+          "above_level_trend",
+          "below_level_nontrend"
+        ],
+        "base_direction": "both",
+        "tested_as": "short"
+      }
+    ],
+    "exit_long": [
+      {
+        "indicator": "CCIDiv",
+        "category": "divergence",
+        "direction": "short",
+        "signal_type": "discrete",
+        "method": "bearish_signal"
+      },
+      {
+        "indicator": "EIT",
+        "category": "trend_direction",
+        "direction": "short",
+        "signal_type": "continuous",
+        "method": "slope_down_regime"
+      },
+      {
+        "indicator": "ADX",
+        "category": "trend_strength",
+        "direction": "short",
+        "signal_type": "continuous",
+        "method": [
+          "above_level_trend",
+          "below_level_nontrend"
+        ],
+        "base_direction": "both",
+        "tested_as": "short"
+      }
+    ],
+    "entry_short": [
+      {
+        "indicator": "EFISH",
+        "category": "momentum",
+        "direction": "short",
+        "signal_type": "continuous",
+        "method": "above_up_level_short"
+      },
+      {
+        "indicator": "RSI",
+        "category": "momentum",
+        "direction": "short",
+        "signal_type": "discrete",
+        "method": "cross_below_up_level_short"
+      },
+      {
+        "indicator": "AROON",
+        "category": "trend_strength",
+        "direction": "short",
+        "signal_type": "continuous",
+        "method": [
+          "strong_trend_regime",
+          "moderate_trend_regime",
+          "weak_trend_regime"
+        ],
+        "base_direction": "both",
+        "tested_as": "short"
+      }
+    ],
+    "exit_short": [
+      {
+        "indicator": "CCIDiv",
+        "category": "divergence",
+        "direction": "long",
+        "signal_type": "discrete",
+        "method": "bullish_signal"
+      },
+      {
+        "indicator": "EFISH",
+        "category": "momentum",
+        "direction": "long",
+        "signal_type": "continuous",
+        "method": "below_down_level_long"
+      },
+      {
+        "indicator": "ERFilt",
+        "category": "volatility",
+        "direction": "long",
+        "signal_type": "continuous",
+        "method": [
+          "high_volatility_regime",
+          "low_volatility_regime",
+          "medium_volatility_regime"
+        ],
+        "base_direction": "both",
+        "tested_as": "long"
+      }
+    ]
+  },
+  {
+    "entry_long": [
+      {
+        "indicator": "MACD",
+        "category": "momentum",
+        "direction": "long",
+        "signal_type": "discrete",
+        "method": "macd_cross_above_zero_long"
+      },
+      {
+        "indicator": "SuperTrend",
+        "category": "trend_direction",
+        "direction": "long",
+        "signal_type": "continuous",
+        "method": "long_regime"
+      },
+      {
+        "indicator": "AROON",
+        "category": "trend_strength",
+        "direction": "long",
+        "signal_type": "continuous",
+        "method": [
+          "strong_trend_regime",
+          "moderate_trend_regime",
+          "weak_trend_regime"
+        ],
+        "base_direction": "both",
+        "tested_as": "long"
+      }
+    ],
+    "exit_long": [
+      {
+        "indicator": "CCIDiv",
+        "category": "divergence",
+        "direction": "short",
+        "signal_type": "discrete",
+        "method": "bearish_signal"
+      },
+      {
+        "indicator": "EIT",
+        "category": "trend_direction",
+        "direction": "short",
+        "signal_type": "continuous",
+        "method": "slope_down_regime"
+      },
+      {
+        "indicator": "ADX",
+        "category": "trend_strength",
+        "direction": "short",
+        "signal_type": "continuous",
+        "method": [
+          "above_level_trend",
+          "below_level_nontrend"
+        ],
+        "base_direction": "both",
+        "tested_as": "short"
+      }
+    ],
+    "entry_short": [
+      {
+        "indicator": "EFISH",
+        "category": "momentum",
+        "direction": "short",
+        "signal_type": "continuous",
+        "method": "above_up_level_short"
+      },
+      {
+        "indicator": "RSI",
+        "category": "momentum",
+        "direction": "short",
+        "signal_type": "discrete",
+        "method": "cross_below_up_level_short"
+      },
+      {
+        "indicator": "BBWidth",
+        "category": "volatility",
+        "direction": "short",
+        "signal_type": "continuous",
+        "method": [
+          "high_volatility_regime",
+          "low_volatility_regime",
+          "medium_volatility_regime"
+        ],
+        "base_direction": "both",
+        "tested_as": "short"
+      }
+    ],
+    "exit_short": [
+      {
+        "indicator": "CCIDiv",
+        "category": "divergence",
+        "direction": "long",
+        "signal_type": "discrete",
+        "method": "bullish_signal"
+      },
+      {
+        "indicator": "EFISH",
+        "category": "momentum",
+        "direction": "long",
+        "signal_type": "continuous",
+        "method": "below_down_level_long"
+      },
+      {
+        "indicator": "ERFilt",
+        "category": "volatility",
+        "direction": "long",
+        "signal_type": "continuous",
+        "method": [
+          "high_volatility_regime",
+          "low_volatility_regime",
+          "medium_volatility_regime"
+        ],
+        "base_direction": "both",
+        "tested_as": "long"
+      }
+    ]
+  },
+  {
+    "entry_long": [
+      {
+        "indicator": "EFISH",
+        "category": "momentum",
+        "direction": "long",
+        "signal_type": "discrete",
+        "method": "cross_above_zero_long"
+      },
+      {
+        "indicator": "LinReg",
+        "category": "trend_direction",
+        "direction": "long",
+        "signal_type": "continuous",
+        "method": "long_regime"
+      },
+      {
+        "indicator": "ADX",
+        "category": "trend_strength",
+        "direction": "short",
+        "signal_type": "continuous",
+        "method": [
+          "above_level_trend",
+          "below_level_nontrend"
+        ],
+        "base_direction": "both",
+        "tested_as": "short"
+      }
+    ],
+    "exit_long": [
+      {
+        "indicator": "CCIDiv",
+        "category": "divergence",
+        "direction": "short",
+        "signal_type": "discrete",
+        "method": "bearish_signal"
+      },
+      {
+        "indicator": "EIT",
+        "category": "trend_direction",
+        "direction": "short",
+        "signal_type": "continuous",
+        "method": "slope_down_regime"
+      },
+      {
+        "indicator": "ADX",
+        "category": "trend_strength",
+        "direction": "short",
+        "signal_type": "continuous",
+        "method": [
+          "above_level_trend",
+          "below_level_nontrend"
+        ],
+        "base_direction": "both",
+        "tested_as": "short"
+      }
+    ],
+    "entry_short": [
+      {
+        "indicator": "EFISH",
+        "category": "momentum",
+        "direction": "short",
+        "signal_type": "continuous",
+        "method": "above_up_level_short"
+      },
+      {
+        "indicator": "RSI",
+        "category": "momentum",
+        "direction": "short",
+        "signal_type": "discrete",
+        "method": "cross_below_up_level_short"
+      },
+      {
+        "indicator": "ERFilt",
+        "category": "volatility",
+        "direction": "short",
+        "signal_type": "continuous",
+        "method": [
+          "high_volatility_regime",
+          "low_volatility_regime",
+          "medium_volatility_regime"
+        ],
+        "base_direction": "both",
+        "tested_as": "short"
+      }
+    ],
+    "exit_short": [
+      {
+        "indicator": "CCIDiv",
+        "category": "divergence",
+        "direction": "long",
+        "signal_type": "discrete",
+        "method": "bullish_signal"
+      },
+      {
+        "indicator": "EFISH",
+        "category": "momentum",
+        "direction": "long",
+        "signal_type": "continuous",
+        "method": "below_down_level_long"
+      },
+      {
+        "indicator": "ERFilt",
+        "category": "volatility",
+        "direction": "long",
+        "signal_type": "continuous",
+        "method": [
+          "high_volatility_regime",
+          "low_volatility_regime",
+          "medium_volatility_regime"
+        ],
+        "base_direction": "both",
+        "tested_as": "long"
+      }
+    ]
+  }
+]

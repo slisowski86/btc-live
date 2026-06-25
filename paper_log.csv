@@ -1,0 +1,2 @@
+bar_time,close,n_long,n_short,n_flat,net_raw,vol_size,sma,risk_off,gate,target_exposure,prev_exposure,delta_exposure,order_side,order_qty_btc,order_usd,paper_equity,cum_return
+2026-06-24 19:00:00,59958.3,1,0,3,0.25,0.286,64137.31,True,0.0,0.0,0.0,0.0,-,0.0,0.0,10000.0,0.0
