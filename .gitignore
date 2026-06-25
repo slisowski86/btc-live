@@ -1,0 +1,31 @@
+# ---- secrets (NEVER commit) ----
+secrets.env
+*.key
+.env
+
+# ---- runtime state & logs ----
+paper_log.csv
+paper_state.json
+paper_service.log
+*.log
+
+# ---- python / numba caches ----
+__pycache__/
+*.pyc
+*.nbc
+*.nbi
+.ipynb_checkpoints/
+
+# ---- envs ----
+.venv/
+venv/
+miniconda3/
+
+# ---- large/regenerable data (re-download with download_btc_data.py) ----
+# comment these out if you DO want the CSVs in the repo
+BTCUSDT_1h.csv
+ETHUSDT_1h.csv
+
+# ---- generated outputs ----
+Strategy_Description.pdf
+cluster_gauntlet.json

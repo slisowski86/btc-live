@@ -39,7 +39,7 @@ else
   conda create -n "$ENV_NAME" python=3.12 -y
 fi
 conda install -n "$ENV_NAME" -c conda-forge \
-  ta-lib numba numpy pandas plotly tqdm matplotlib reportlab pypdf -y
+  ta-lib numba numpy pandas plotly tqdm matplotlib reportlab pypdf ccxt -y
 
 # 3. verify --------------------------------------------------------------------
 echo "-- verifying ..."

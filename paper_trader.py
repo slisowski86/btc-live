@@ -108,7 +108,84 @@ def log_row(row):
     pd.DataFrame([row]).to_csv(LOG_FILE, mode="a", header=hdr, index=False)
 
 
-def run_once(basket):
+# ---------------- testnet execution (optional, --testnet) ----------------
+CCXT_SYMBOL   = "BTC/USDT:USDT"     # Binance USDT-M perpetual (ccxt notation)
+MIN_ORDER_USD = 5.0                 # skip orders smaller than this notional
+SECRETS_FILE  = "secrets.env"       # KEY=VALUE lines; git-ignored; never commit
+
+
+def load_secrets(path=SECRETS_FILE):
+    """Load KEY=VALUE lines from secrets.env into the environment (if present)."""
+    if not os.path.exists(path):
+        return
+    for line in open(path, encoding="utf-8"):
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+
+
+def make_exchange():
+    """Connect to the Binance Futures TESTNET via ccxt using env-stored keys."""
+    try:
+        import ccxt
+    except ImportError:
+        raise SystemExit("ccxt not installed:  pip install ccxt")
+    key = os.environ.get("BINANCE_TESTNET_KEY")
+    sec = os.environ.get("BINANCE_TESTNET_SECRET")
+    if not key or not sec:
+        raise SystemExit("missing keys: set BINANCE_TESTNET_KEY / BINANCE_TESTNET_SECRET "
+                         f"(env vars or {SECRETS_FILE})")
+    ex = ccxt.binanceusdm({"apiKey": key, "secret": sec, "enableRateLimit": True})
+    ex.set_sandbox_mode(True)                       # <-- Binance futures TESTNET (fake money)
+    ex.load_markets()
+    lev = max(2, int(round(ps.MAX_LEVERAGE)))
+    try:
+        ex.set_leverage(lev, CCXT_SYMBOL)
+    except Exception as e:
+        print(f"[testnet] set_leverage warning: {e}")
+    bal = float(ex.fetch_balance()["USDT"]["total"])
+    print(f"[testnet] connected | balance {bal:.2f} USDT | leverage {lev}x | symbol {CCXT_SYMBOL}")
+    return ex
+
+
+def _current_position(ex):
+    """Signed current position size (contracts) on the testnet, + USDT equity."""
+    equity = float(ex.fetch_balance()["USDT"]["total"])
+    pos = 0.0
+    for p in ex.fetch_positions([CCXT_SYMBOL]):
+        if p.get("symbol") == CCXT_SYMBOL and p.get("contracts"):
+            sign = -1.0 if p.get("side") == "short" else 1.0
+            pos = float(p["contracts"]) * sign
+    return pos, equity
+
+
+def exec_to_target(ex, target_exp, price):
+    """Place a market order on the testnet to move to target exposure. Returns a detail dict."""
+    pos, equity = _current_position(ex)
+    target_qty = (equity * target_exp) / price          # leveraged notional / price
+    delta = target_qty - pos
+    notional = abs(delta) * price
+    out = {"equity": round(equity, 2), "pos_before": round(pos, 6),
+           "target_qty": round(target_qty, 6), "delta_qty": round(delta, 6), "order": None}
+    if notional < MIN_ORDER_USD:
+        return out
+    side = "buy" if delta > 0 else "sell"
+    amt = ex.amount_to_precision(CCXT_SYMBOL, abs(delta))
+    if float(amt) <= 0:
+        return out
+    try:
+        o = ex.create_order(CCXT_SYMBOL, "market", side, amt)
+        out["order"] = f"{side} {amt} @market (id {o.get('id')})"
+        print(f"[testnet] ORDER {side} {amt} BTC  (~${notional:.0f})")
+    except Exception as e:
+        out["order"] = f"FAILED: {e}"
+        print(f"[testnet] order FAILED: {e}")
+    return out
+
+
+def run_once(basket, exchange=None):
     df = fetch_klines()
     bar_time = str(df.index[-1])
     close = float(df["Close"].iloc[-1])
@@ -145,6 +222,9 @@ def run_once(basket):
     order_qty = order_usd / close
     cum_ret = st["equity"] / START_EQUITY - 1.0
 
+    # TESTNET: place a real (simulated) order to move to the target exposure
+    tn = exec_to_target(exchange, target, close) if exchange is not None else None
+
     row = {
         "bar_time": bar_time, "close": round(close, 2),
         "n_long": d["n_long"], "n_short": d["n_short"], "n_flat": d["n_flat"],
@@ -157,6 +237,8 @@ def run_once(basket):
         "funding_rate": round(fund_rate, 6), "funding_impact": round(fund_impact, 6),
         "funding_cum": round(st.get("funding_cum", 0.0), 5),
         "paper_equity": round(st["equity"], 2), "cum_return": round(cum_ret, 4),
+        "testnet_equity": (tn["equity"] if tn else None),
+        "testnet_order": (tn["order"] if tn else None),
     }
     log_row(row)
     fund_note = f"  funding {fund_impact*100:+.3f}%" if fund_impact != 0.0 else ""
@@ -175,19 +257,27 @@ def main():
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--once", action="store_true")
     g.add_argument("--loop", action="store_true")
+    ap.add_argument("--testnet", action="store_true",
+                    help="place real SIMULATED orders on the Binance Futures testnet")
     a = ap.parse_args()
 
+    exchange = None
+    if a.testnet:
+        load_secrets()
+        exchange = make_exchange()
+
     basket = load_basket()
+    mode = "TESTNET orders" if exchange is not None else "PAPER (no orders)"
     print(f"loaded basket of {len(basket)} strategies | target_vol {ps.TARGET_ANN_VOL} "
           f"| leverage {ps.LEVERAGE}x | max_lev {ps.MAX_LEVERAGE} | "
-          f"trend filter {ps.USE_TREND}(MA{ps.MA_WIN}) | funding {APPLY_FUNDING} | PAPER (no orders)")
+          f"trend filter {ps.USE_TREND}(MA{ps.MA_WIN}) | funding {APPLY_FUNDING} | {mode}")
 
     if a.once:
-        run_once(basket)
+        run_once(basket, exchange)
         return
     while True:
         try:
-            run_once(basket)
+            run_once(basket, exchange)
         except Exception as e:
             print(f"[{dt.datetime.now():%H:%M:%S}] error: {e}")
         now = time.time()
