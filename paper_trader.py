@@ -4,13 +4,17 @@ Stage-0 paper-trading logger for the cross-confirmed BTC basket.
 Each closed 1h bar it: fetches live BTC bars, computes each basket strategy's current
 position, NETS them, applies volatility-target sizing (target_ann_vol) with a hard
 leverage cap, and LOGS the target exposure / order size + a paper-equity mark.
-NO real orders are placed.
 
-    py paper_trader.py --once      # one cycle (use with Windows Task Scheduler, hourly)
-    py paper_trader.py --loop      # run forever, waking ~15s after each hour close
+By default NO real orders are placed (paper accounting only). With --live (and the
+LIVE_CONFIRM=YES safety switch in secrets.env) it places REAL orders on Binance USDT-M
+futures - real money.
+
+    py paper_trader.py --once      # one paper cycle (Windows Task Scheduler, hourly)
+    py paper_trader.py --loop      # paper, run forever, waking ~15s after each hour close
+    py paper_trader.py --loop --live   # REAL Binance-futures orders (needs LIVE_CONFIRM=YES)
 
 Outputs:
-    paper_log.csv     - one row per processed bar (signals, exposure, order, paper equity)
+    paper_log.csv     - one row per processed bar (signals, exposure, order, equity)
     paper_state.json  - persisted state so restarts resume correctly
 """
 from __future__ import annotations
@@ -21,6 +25,7 @@ import numpy as np, pandas as pd
 # source of truth - all strategy/sizing config lives in protected_strategy.py
 import protected_strategy as ps
 from protected_strategy import target_exposure, load_basket
+import monitor    # live monitoring + email alerts (best-effort; never raises)
 
 # ---------------- execution config (data/accounting only) ----------------
 SYMBOL          = "BTCUSDT"
@@ -108,10 +113,21 @@ def log_row(row):
     pd.DataFrame([row]).to_csv(LOG_FILE, mode="a", header=hdr, index=False)
 
 
-# ---------------- testnet execution (optional, --testnet) ----------------
-CCXT_SYMBOL   = "BTC/USDT:USDT"     # Binance USDT-M perpetual (ccxt notation)
+# ---------------- live execution (optional, --live) ----------------
+# exchange connection lives in ccxt_exchanges.py (Binance USDT-M futures, REAL money);
+# the symbol is returned from there. Order placement below is exchange-agnostic ccxt.
 MIN_ORDER_USD = 5.0                 # skip orders smaller than this notional
 SECRETS_FILE  = "secrets.env"       # KEY=VALUE lines; git-ignored; never commit
+
+
+def _clean_secret_value(v):
+    """Strip surrounding quotes and any trailing inline `# comment` (a # after whitespace)."""
+    v = v.strip()
+    if not (v.startswith('"') or v.startswith("'")):
+        h = v.find("#")
+        if h > 0 and v[h - 1].isspace():
+            v = v[:h].strip()
+    return v.strip().strip('"').strip("'")
 
 
 def load_secrets(path=SECRETS_FILE):
@@ -123,48 +139,36 @@ def load_secrets(path=SECRETS_FILE):
         if not line or line.startswith("#") or "=" not in line:
             continue
         k, v = line.split("=", 1)
-        os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+        os.environ.setdefault(k.strip(), _clean_secret_value(v))
 
 
-def make_exchange():
-    """Connect to the Binance Futures TESTNET via ccxt using env-stored keys."""
-    try:
-        import ccxt
-    except ImportError:
-        raise SystemExit("ccxt not installed:  pip install ccxt")
-    key = os.environ.get("BINANCE_TESTNET_KEY")
-    sec = os.environ.get("BINANCE_TESTNET_SECRET")
-    if not key or not sec:
-        raise SystemExit("missing keys: set BINANCE_TESTNET_KEY / BINANCE_TESTNET_SECRET "
-                         f"(env vars or {SECRETS_FILE})")
-    ex = ccxt.binanceusdm({"apiKey": key, "secret": sec, "enableRateLimit": True})
-    ex.set_sandbox_mode(True)                       # <-- Binance futures TESTNET (fake money)
-    ex.load_markets()
-    lev = max(2, int(round(ps.MAX_LEVERAGE)))
-    try:
-        ex.set_leverage(lev, CCXT_SYMBOL)
-    except Exception as e:
-        print(f"[testnet] set_leverage warning: {e}")
-    bal = float(ex.fetch_balance()["USDT"]["total"])
-    print(f"[testnet] connected | balance {bal:.2f} USDT | leverage {lev}x | symbol {CCXT_SYMBOL}")
-    return ex
-
-
-def _current_position(ex):
-    """Signed current position size (contracts) on the testnet, + USDT equity."""
-    equity = float(ex.fetch_balance()["USDT"]["total"])
+def _position_and_equity(ex, symbol, market_type):
+    """Current BTC position (signed) + USDT-value equity, for spot or swap."""
+    bal = ex.fetch_balance()
+    if market_type == "spot":
+        base = symbol.split("/")[0]                       # BTC
+        btc = float(bal.get(base, {}).get("free") or 0.0)
+        usdt = float(bal.get("USDT", {}).get("free") or 0.0)
+        return btc, usdt + btc * _last_price_hint[0]      # equity = USDT + BTC value
+    equity = float(bal.get("USDT", {}).get("total") or 0.0)
     pos = 0.0
-    for p in ex.fetch_positions([CCXT_SYMBOL]):
-        if p.get("symbol") == CCXT_SYMBOL and p.get("contracts"):
+    for p in ex.fetch_positions([symbol]):
+        if p.get("symbol") == symbol and p.get("contracts"):
             sign = -1.0 if p.get("side") == "short" else 1.0
             pos = float(p["contracts"]) * sign
     return pos, equity
 
 
-def exec_to_target(ex, target_exp, price):
-    """Place a market order on the testnet to move to target exposure. Returns a detail dict."""
-    pos, equity = _current_position(ex)
-    target_qty = (equity * target_exp) / price          # leveraged notional / price
+_last_price_hint = [0.0]   # set each cycle so spot equity can value the BTC balance
+
+
+def exec_to_target(ex, symbol, market_type, target_exp, price):
+    """Place a market order to move to target exposure. spot = long-only (exposure clamped 0..1)."""
+    _last_price_hint[0] = price
+    if market_type == "spot":
+        target_exp = max(0.0, min(1.0, target_exp))       # no shorts, no leverage on spot
+    pos, equity = _position_and_equity(ex, symbol, market_type)
+    target_qty = (equity * target_exp) / price
     delta = target_qty - pos
     notional = abs(delta) * price
     out = {"equity": round(equity, 2), "pos_before": round(pos, 6),
@@ -172,20 +176,20 @@ def exec_to_target(ex, target_exp, price):
     if notional < MIN_ORDER_USD:
         return out
     side = "buy" if delta > 0 else "sell"
-    amt = ex.amount_to_precision(CCXT_SYMBOL, abs(delta))
+    amt = ex.amount_to_precision(symbol, abs(delta))
     if float(amt) <= 0:
         return out
     try:
-        o = ex.create_order(CCXT_SYMBOL, "market", side, amt)
+        o = ex.create_order(symbol, "market", side, amt)
         out["order"] = f"{side} {amt} @market (id {o.get('id')})"
-        print(f"[testnet] ORDER {side} {amt} BTC  (~${notional:.0f})")
+        print(f"[LIVE] ORDER {side} {amt} BTC  (~${notional:.0f})")
     except Exception as e:
         out["order"] = f"FAILED: {e}"
-        print(f"[testnet] order FAILED: {e}")
+        print(f"[LIVE] order FAILED: {e}")
     return out
 
 
-def run_once(basket, exchange=None):
+def run_once(basket, exchange=None, symbol=None, market_type=None):
     df = fetch_klines()
     bar_time = str(df.index[-1])
     close = float(df["Close"].iloc[-1])
@@ -222,8 +226,8 @@ def run_once(basket, exchange=None):
     order_qty = order_usd / close
     cum_ret = st["equity"] / START_EQUITY - 1.0
 
-    # TESTNET: place a real (simulated) order to move to the target exposure
-    tn = exec_to_target(exchange, target, close) if exchange is not None else None
+    # LIVE: place a REAL order on Binance futures to move to the target exposure (only if --live)
+    tn = exec_to_target(exchange, symbol, market_type, target, close) if exchange is not None else None
 
     row = {
         "bar_time": bar_time, "close": round(close, 2),
@@ -248,6 +252,20 @@ def run_once(basket, exchange=None):
           f"-> exposure {target:+.2f}  {row['order_side']} {abs(order_qty):.4f}BTC  "
           f"equity {st['equity']:.0f} ({cum_ret:+.1%}){fund_note}{flag}")
 
+    # ---- live monitoring + email alerts (trade / daily summary / heartbeat) ----
+    if tn is not None:                                   # on an exchange (testnet/real)
+        live_equity = tn["equity"] if tn.get("equity") is not None else st["equity"]
+        traded = bool(tn.get("order")) and not str(tn["order"]).startswith("FAILED")
+        order_desc = tn.get("order") or "-"
+    else:                                                # paper accounting
+        live_equity = st["equity"]
+        traded = abs(delta) > 1e-9
+        order_desc = (f"{row['order_side']} {abs(order_qty):.6f} BTC (~${abs(order_usd):,.0f})"
+                      if traded else "-")
+    monitor.on_bar(live_equity, bar_time=bar_time, close=close, exposure=target,
+                   prev_exposure=st["exposure"], traded=traded, order_desc=order_desc,
+                   detail=d, cum_return=cum_ret, live=(exchange is not None))
+
     st.update(exposure=target, prev_close=close, last_bar=bar_time)
     save_state(st)
 
@@ -257,32 +275,57 @@ def main():
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--once", action="store_true")
     g.add_argument("--loop", action="store_true")
-    ap.add_argument("--testnet", action="store_true",
-                    help="place real SIMULATED orders on the Binance Futures testnet")
+    ap.add_argument("--live", action="store_true",
+                    help="place REAL orders on Binance USDT-M futures (REAL MONEY)")
     a = ap.parse_args()
 
-    exchange = None
-    if a.testnet:
-        load_secrets()
-        exchange = make_exchange()
+    load_secrets()      # always: loads EMAIL_* / ANTHROPIC_API_KEY (+ exchange keys) into env
+    exchange = symbol = market_type = None
+    if a.live:
+        if os.environ.get("LIVE_CONFIRM", "").strip().upper() != "YES":
+            raise SystemExit("--live refused: set LIVE_CONFIRM=YES in secrets.env to enable REAL "
+                             "Binance-futures trading (real money).")
+        import ccxt_exchanges
+        lev = max(1, int(round(ps.MAX_LEVERAGE)))
+        print("=" * 60)
+        print("  !!!  LIVE TRADING ON BINANCE USDT-M FUTURES - REAL MONEY  !!!")
+        print("=" * 60)
+        exchange, symbol, market_type = ccxt_exchanges.make_binance_futures(lev)
 
     basket = load_basket()
-    mode = "TESTNET orders" if exchange is not None else "PAPER (no orders)"
+    mode = "LIVE Binance futures (REAL orders)" if exchange is not None else "PAPER (no orders)"
     print(f"loaded basket of {len(basket)} strategies | target_vol {ps.TARGET_ANN_VOL} "
           f"| leverage {ps.LEVERAGE}x | max_lev {ps.MAX_LEVERAGE} | "
           f"trend filter {ps.USE_TREND}(MA{ps.MA_WIN}) | funding {APPLY_FUNDING} | {mode}")
+    if monitor.notifier.email_configured():
+        print(f"[monitor] email alerts ENABLED -> {os.environ.get('EMAIL_TO')}")
+    else:
+        print("[monitor] email alerts OFF (set EMAIL_* in secrets.env to enable)")
 
     if a.once:
-        run_once(basket, exchange)
-        return
-    while True:
         try:
-            run_once(basket, exchange)
+            run_once(basket, exchange, symbol, market_type)
         except Exception as e:
             print(f"[{dt.datetime.now():%H:%M:%S}] error: {e}")
-        now = time.time()
-        nxt = (int(now // 3600) + 1) * 3600 + 15      # 15s after the next hour close
-        time.sleep(max(5, nxt - now))
+            monitor.on_error(e, "run_once --once")
+        return
+
+    monitor.on_start(mode)
+    try:
+        while True:
+            try:
+                run_once(basket, exchange, symbol, market_type)
+            except Exception as e:
+                print(f"[{dt.datetime.now():%H:%M:%S}] error: {e}")
+                monitor.on_error(e, "run_once")
+            now = time.time()
+            nxt = (int(now // 3600) + 1) * 3600 + 15      # 15s after the next hour close
+            time.sleep(max(5, nxt - now))
+    except KeyboardInterrupt:
+        print("stopped by user")
+    except BaseException as e:                            # unexpected fatal -> crash email
+        monitor.on_crash(e)
+        raise
 
 
 if __name__ == "__main__":

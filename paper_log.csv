@@ -1,2 +1,2 @@
 bar_time,close,n_long,n_short,n_flat,net_raw,vol_size,sma,risk_off,gate,target_exposure,prev_exposure,delta_exposure,order_side,order_qty_btc,order_usd,funding_rate,funding_impact,funding_cum,paper_equity,cum_return,testnet_equity,testnet_order
-2026-06-25 05:00:00,61600.01,1,0,3,0.25,0.26,64049.28,True,0.0,0.0,0.0,0.0,-,0.0,0.0,0.0,0.0,0.0,10000.0,0.0,,
+2026-06-25 19:00:00,59320.0,1,0,3,0.25,0.175,63900.78,True,0.0,0.0,0.0,0.0,-,0.0,0.0,0.0,0.0,0.0,10000.0,0.0,,

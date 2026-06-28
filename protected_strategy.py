@@ -29,12 +29,30 @@ LEVERAGE       = 1.0       # settable leverage (1 = unlevered; start here). 2-3x
 MAX_LEVERAGE   = 2.0       # hard safety cap on exposure (after LEVERAGE)
 USE_TREND      = True      # crash defense: flatten net-long when price < MA
 MA_WIN         = 300       # trend MA window in bars (200-400 all robust; 300 = balanced)
-REGIME_FLOOR   = 0.0       # net-long exposure kept when risk-off (0 = flatten; 0.3 = reduce to 30%)
+REGIME_FLOOR   = 0.0       # exposure kept when risk-off (0 = flatten; 0.3 = reduce to 30%)
+TREND_SYMMETRIC = True   # also flatten net-SHORT in an uptrend (defends short-squeeze drawdowns)
 PPY            = 8760.0
 
 
 def load_basket(path: str = None) -> list:
     return json.load(open(path or BASKET_FILE))
+
+
+def _trend_gate(close, net, sl, symmetric):
+    """
+    Per-bar exposure gate from the trend filter (causal trailing MA).
+    Always flattens net-LONG in a downtrend (price < MA). If `symmetric`, also flattens
+    net-SHORT in an uptrend (price > MA) - defends against short squeezes in bull runs.
+    Returns a multiplier array (REGIME_FLOOR where gated, else 1.0).
+    """
+    import numpy as np, pandas as pd
+    sma = pd.Series(close).rolling(MA_WIN, min_periods=MA_WIN // 2).mean().values[sl]
+    c = close[sl]
+    gate = np.ones(net.shape[0])
+    gate = np.where((c < sma) & (net > 0), REGIME_FLOOR, gate)          # downtrend -> cut longs
+    if symmetric:
+        gate = np.where((c > sma) & (net < 0), REGIME_FLOOR, gate)      # uptrend -> cut shorts
+    return gate
 
 
 def _position_now(EL, XL, ES, XS) -> int:
@@ -72,7 +90,7 @@ def _position_series(EL, XL, ES, XS):
 
 
 def protected_pnl_series(df, start_date=None, end_date=None, cost: float = 0.0015,
-                         basket: list = None):
+                         basket: list = None, symmetric: bool = None):
     """
     Per-bar P&L of the PROTECTED basket (vol-target sizing + trend filter) at 1x leverage,
     over [start_date, end_date]. Indicators computed on the full df (warm-up preserved); only
@@ -100,9 +118,8 @@ def protected_pnl_series(df, start_date=None, end_date=None, cost: float = 0.001
     base = np.mean(pnls, axis=0)
     net = np.mean(np.array(poss), axis=0)
     if USE_TREND:
-        sma = pd.Series(close).rolling(MA_WIN, min_periods=MA_WIN // 2).mean().values[sl]
-        gate = np.where((close[sl] < sma) & (net > 0), REGIME_FLOOR, 1.0)
-        base = base * gate
+        sym = TREND_SYMMETRIC if symmetric is None else symmetric
+        base = base * _trend_gate(close, net, sl, sym)
     return base, net, df.index[sl]
 
 
@@ -134,13 +151,18 @@ def target_exposure(df, basket: list = None):
     vol_size = float(sf.compute_vol_target_size(
         close, target_ann_vol=TARGET_ANN_VOL, periods_per_year=PPY)[-1])
 
-    # trend filter: flatten net-long exposure in a downtrend (causal trailing MA)
+    # trend filter: flatten net-long in a downtrend; if symmetric, also flatten net-short in
+    # an uptrend (defends short squeezes). Causal trailing MA.
     gate, risk_off, sma = 1.0, False, float("nan")
     if USE_TREND:
         sma = float(pd.Series(close).rolling(MA_WIN, min_periods=MA_WIN // 2).mean().values[-1])
-        risk_off = bool(close[-1] < sma)
-        if risk_off and raw > 0:
-            gate = REGIME_FLOOR
+        down = bool(close[-1] < sma)
+        risk_off = down
+        if down and raw > 0:
+            gate = REGIME_FLOOR                                  # downtrend -> cut long
+        elif TREND_SYMMETRIC and (not down) and raw < 0:
+            gate = REGIME_FLOOR                                  # uptrend -> cut short
+            risk_off = True
 
     exposure = raw * vol_size * LEVERAGE * gate
     exposure = float(np.clip(exposure, -MAX_LEVERAGE, MAX_LEVERAGE))

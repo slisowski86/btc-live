@@ -6,7 +6,6 @@ TA-Lib==0.6.8
 plotly
 tqdm
 matplotlib
-ccxt             # Binance testnet/live order execution (paper_trader.py --testnet)
-reportlab        # PDF strategy description
-pypdf            # PDF validation (optional)
+ccxt             # Binance USDT-M futures live order execution (paper_trader.py --live)
 ipykernel        # so the env can be used as a Jupyter kernel
+anthropic        # daily Claude strategy review in the email summary (claude_review.py)

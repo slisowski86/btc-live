@@ -9,6 +9,12 @@ paper_state.json
 paper_service.log
 *.log
 
+# ---- monitoring state (regenerated at runtime) ----
+monitor_state.json
+watchdog_state.json
+heartbeat.txt
+daily_stats.csv
+
 # ---- python / numba caches ----
 __pycache__/
 *.pyc
