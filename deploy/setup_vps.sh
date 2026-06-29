@@ -31,15 +31,22 @@ fi
 # shellcheck disable=SC1091
 source "$MINICONDA_DIR/etc/profile.d/conda.sh"
 
+# accept Anaconda channel Terms of Service (required by recent conda) -----------
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main 2>/dev/null || true
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r 2>/dev/null || true
+
 # 2. environment ---------------------------------------------------------------
 if conda env list | grep -qE "^$ENV_NAME[[:space:]]"; then
   echo "-- env $ENV_NAME already exists; ensuring deps ..."
 else
   echo "-- creating env $ENV_NAME ..."
-  conda create -n "$ENV_NAME" python=3.12 -y
+  conda create -n "$ENV_NAME" -c conda-forge python=3.12 -y
 fi
 conda install -n "$ENV_NAME" -c conda-forge \
-  ta-lib numba numpy pandas plotly tqdm matplotlib reportlab pypdf ccxt -y
+  ta-lib numba numpy pandas plotly tqdm matplotlib ccxt -y
+# optional: Claude daily review in the email summary
+conda run -n "$ENV_NAME" pip install anthropic >/dev/null 2>&1 || \
+  echo "-- note: 'anthropic' not installed (optional; only for the Claude review)"
 
 # 3. verify --------------------------------------------------------------------
 echo "-- verifying ..."

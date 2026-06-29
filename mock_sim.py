@@ -178,18 +178,18 @@ def sc_alert(_):
 
 def sc_watchdog(_):
     _hdr("watchdog", "stale heartbeat -> 'trader DOWN' email")
-    import watchdog
+    stale = 130 * 60                                    # watchdog default: ~2h since last beat
     monitor.heartbeat("stale-test")
     old = time.time() - 3 * 3600                        # pretend last beat was 3h ago
     os.utime(monitor.HEARTBEAT_FILE, (old, old))
     age = time.time() - os.path.getmtime(monitor.HEARTBEAT_FILE)
-    if age > watchdog.STALE_SECONDS:
+    if age > stale:
         notifier.send_email(
             "WATCHDOG: trader appears DOWN",
             f"The live trader has not updated its heartbeat.\n  last heartbeat {age/3600:.1f}h ago\n"
-            f"  staleness threshold: {watchdog.STALE_SECONDS/3600:.1f}h\n\n"
+            f"  staleness threshold: {stale/3600:.1f}h\n\n"
             f"(This is a mock_sim test - your real trader is unaffected.)\n")
-        print(f"  heartbeat {age/3600:.1f}h old > {watchdog.STALE_SECONDS/3600:.1f}h -> DOWN email sent")
+        print(f"  heartbeat {age/3600:.1f}h old > {stale/3600:.1f}h -> DOWN email sent")
     else:
         print("  heartbeat not stale enough (unexpected)")
 

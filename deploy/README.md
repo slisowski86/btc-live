@@ -1,70 +1,95 @@
-# Deploying BTC_Live to a VPS
+# Deploying BTC_Live to a DigitalOcean droplet (web console)
 
-Runs the protected paper trader 24/7 with auto-restart. Tested for Ubuntu 22.04/24.04
-(x86_64 or ARM). The bot is tiny — 1 vCPU / 1–2 GB RAM / ~15 GB disk is plenty.
+Runs the trader + watchdog 24/7 with auto-restart. Tested on Ubuntu 22.04/24.04. The bot is
+tiny — the cheapest droplet (1 vCPU / 1 GB RAM) is plenty.
 
-## 1. Get the code onto the VPS
+Everything below is typed into the droplet's **web console** (Droplet → Access → Launch Console).
+The only thing the web console can't do is copy files off your PC — so the code comes in via `git`.
 
-From your PC (PowerShell), copy the project (excluding caches):
+## 1. Get the code onto the droplet (via GitHub)
+
+**On your PC (one time)** — push the project to a *private* GitHub repo. `secrets.env` is
+git-ignored, so your keys never leave your machine:
 
 ```powershell
-scp -r C:\Users\sliso\BTC_Live user@YOUR_VPS_IP:~/BTC_Live
+cd C:\Users\sliso\BTC_Live
+git add -A
+git commit -m "deploy"
+git remote add origin https://github.com/<youruser>/BTC_Live.git   # create the repo first (Private)
+git branch -M main
+git push -u origin main
 ```
 
-…or `git clone` it if you've pushed it to a repo. Either way you need the folder at
-`~/BTC_Live` on the server (with `protected_strategy.py`, `paper_trader.py`,
-`btc_basket_crossconfirmed.json`, the `indicators/` folder, etc.).
+**On the droplet (web console):**
+
+```bash
+sudo apt-get update -y && sudo apt-get install -y git
+git clone https://github.com/<youruser>/BTC_Live.git
+cd BTC_Live
+```
+
+A private repo will ask for a username + password — use a **GitHub Personal Access Token**
+(github.com → Settings → Developer settings → Fine-grained tokens, read-only on this repo) as the
+password.
 
 ## 2. Install the environment
 
 ```bash
-cd ~/BTC_Live
 bash deploy/setup_vps.sh
 ```
 
-This installs Miniconda + a `btc_live` conda env (numpy/pandas/numba/**TA-Lib**/…),
-then verifies the strategy imports and the basket loads.
+Installs Miniconda + a `btc_live` conda env (numpy/pandas/numba/**TA-Lib**/ccxt). TA-Lib installs
+cleanly here via conda-forge — no manual C build. Takes a few minutes.
 
-Quick manual check:
-```bash
-~/miniconda3/envs/btc_live/bin/python paper_trader.py --once
-```
-You should see one line: basket loaded, current exposure, paper equity.
+## 3. Create secrets.env on the droplet
 
-## 3. Install the 24/7 service
+It is NOT in the repo (git-ignored), so create it by hand and paste your values:
 
 ```bash
-bash deploy/install_service.sh
+nano secrets.env
+```
+Paste the Kraken keys, email settings, `LIVE_CONFIRM`, and (optional) `HEALTHCHECK_URL` /
+`ANTHROPIC_API_KEY` — see `secrets.env.example` for the exact names. Save with Ctrl-O, Enter,
+Ctrl-X.
+
+Then verify the connection and one cycle:
+```bash
+PY=~/miniconda3/envs/btc_live/bin/python
+$PY test_connection.py            # real Kraken (read-only)
+$PY paper_trader.py --once        # one paper cycle: basket loaded, exposure, equity
 ```
 
-This creates `/etc/systemd/system/btc-paper.service` (with your user + paths filled in),
-enables it (starts on boot), and starts it now. It runs `paper_trader.py --loop` and
-**auto-restarts** on crash or reboot.
-
-## 4. Operate it
+## 4. Install the 24/7 services
 
 ```bash
-journalctl -u btc-paper -f        # live logs
-tail -f ~/BTC_Live/paper_service.log
-sudo systemctl status btc-paper   # state
-sudo systemctl restart btc-paper  # after editing config
-sudo systemctl stop btc-paper     # stop
-sudo systemctl disable --now btc-paper   # stop + don't start on boot
+bash deploy/install_service.sh                    # paper (no real orders)
+# or, when you're ready for real trading (needs LIVE_CONFIRM=YES in secrets.env):
+bash deploy/install_service.sh "--loop --live"    # REAL Kraken futures
 ```
 
-## Config
+This installs two systemd services that start on boot and auto-restart on crash:
+- **btc-paper** — the trader (`paper_trader.py <args>`)
+- **btc-watchdog** — `watchdog.py --loop` (emails you if the trader stops; pings your
+  dead-man's-switch if `HEALTHCHECK_URL` is set)
 
-All strategy/risk settings live in `protected_strategy.py` (leverage, MA window, target
-vol) and `paper_trader.py` (cost, funding). Edit, then `sudo systemctl restart btc-paper`.
+## 5. Operate it
 
-State persists in `paper_state.json`; the hourly log is `paper_log.csv`. Both survive
-restarts, so the bot resumes cleanly.
+```bash
+journalctl -u btc-paper -f         # live trader logs
+journalctl -u btc-watchdog -f      # watchdog logs
+sudo systemctl status btc-paper    # state
+sudo systemctl restart btc-paper   # after editing config / pulling new code
+sudo systemctl stop btc-paper btc-watchdog
+```
+
+Update code later: `cd ~/BTC_Live && git pull && sudo systemctl restart btc-paper btc-watchdog`.
 
 ## Notes
 
-- **Paper only** — `paper_trader.py` places no real orders; it logs target orders + paper
-  equity. To go live you swap the logged order for a real exchange call (e.g. via `ccxt`).
-- **TA-Lib** installs cleanly here via `conda-forge` (no manual C-library build, unlike
-  Windows).
-- The bot is **not latency-sensitive** (acts on the hourly close), so any VPS region works;
-  uptime matters more than location.
+- **Data + execution are Kraken Futures** (BTC/USD perp). Data needs no keys; trading uses
+  `KRAKEN_FUTURES_KEY/SECRET` (real) or `KRAKEN_FUTURES_DEMO_*` (demo).
+- **Going live is two switches:** `LIVE_CONFIRM=YES` in `secrets.env` *and* the `--live` arg on the
+  service. Start small (`LEVERAGE=1.0` in `protected_strategy.py`).
+- State (`paper_state.json`), the log (`paper_log.csv`), and `daily_stats.csv` persist across
+  restarts, so the bot resumes cleanly.
+- Not latency-sensitive (acts on the hourly close) — any droplet region works; uptime matters more.
