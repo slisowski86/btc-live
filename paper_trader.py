@@ -5,20 +5,22 @@ Each closed 1h bar it: fetches live BTC bars, computes each basket strategy's cu
 position, NETS them, applies volatility-target sizing (target_ann_vol) with a hard
 leverage cap, and LOGS the target exposure / order size + a paper-equity mark.
 
-By default NO real orders are placed (paper accounting only). With --live (and the
-LIVE_CONFIRM=YES safety switch in secrets.env) it places REAL orders on Binance USDT-M
-futures - real money.
+Data + execution are Kraken Futures (BTC/USD perp). By default NO real orders are placed
+(paper accounting only):
+  --testnet : DEMO orders on Kraken futures (shorts+leverage, no real money)
+  --live    : REAL orders on Kraken futures (real money; needs LIVE_CONFIRM=YES in secrets.env)
 
-    py paper_trader.py --once      # one paper cycle (Windows Task Scheduler, hourly)
-    py paper_trader.py --loop      # paper, run forever, waking ~15s after each hour close
-    py paper_trader.py --loop --live   # REAL Binance-futures orders (needs LIVE_CONFIRM=YES)
+    py paper_trader.py --once             # one paper cycle (Task Scheduler, hourly)
+    py paper_trader.py --loop             # paper, run forever
+    py paper_trader.py --loop --testnet   # Kraken futures DEMO (full strategy, no real money)
+    py paper_trader.py --loop --live      # REAL Kraken futures (needs LIVE_CONFIRM=YES)
 
 Outputs:
     paper_log.csv     - one row per processed bar (signals, exposure, order, equity)
     paper_state.json  - persisted state so restarts resume correctly
 """
 from __future__ import annotations
-import argparse, json, os, time, datetime as dt, urllib.request
+import argparse, json, os, time, datetime as dt
 import numpy as np, pandas as pd
 
 # the protected strategy (basket + vol-target + trend filter + leverage) is the SINGLE
@@ -28,7 +30,7 @@ from protected_strategy import target_exposure, load_basket
 import monitor    # live monitoring + email alerts (best-effort; never raises)
 
 # ---------------- execution config (data/accounting only) ----------------
-SYMBOL          = "BTCUSDT"
+DATA_SYMBOL     = "BTC/USD:USD"     # Kraken USD-perp; signal klines + funding come from here
 INTERVAL        = "1h"
 COST            = 0.0015    # round-trip cost fraction (for paper P&L)
 WARMUP_BARS     = 1500      # bars fetched for indicator + MA warm-up (>= MA_WIN + buffer)
@@ -36,48 +38,45 @@ START_EQUITY    = 10_000.0
 APPLY_FUNDING   = True      # deduct perp funding (the cost a real leveraged account pays)
 LOG_FILE        = "paper_log.csv"
 STATE_FILE      = "paper_state.json"
-BINANCE         = "https://api.binance.com/api/v3/klines"
-FUNDING_URL     = "https://fapi.binance.com/fapi/v1/fundingRate"   # perp funding history
 
 
-# ---------------- data ----------------
-def fetch_klines(symbol=SYMBOL, interval=INTERVAL, n_bars=WARMUP_BARS):
-    """Fetch the last n_bars CLOSED klines from Binance (paginated). Returns OHLCV df."""
-    out = {}
-    end = None
-    while len(out) < n_bars + 5:
-        url = f"{BINANCE}?symbol={symbol}&interval={interval}&limit=1000"
-        if end:
-            url += f"&endTime={end}"
-        with urllib.request.urlopen(url, timeout=30) as r:
-            rows = json.loads(r.read())
-        if not rows:
-            break
-        for k in rows:
-            out[int(k[0])] = k
-        end = int(rows[0][0]) - 1
-        if len(rows) < 1000:
-            break
-    now_ms = int(time.time() * 1000)
+# ---------------- data (Kraken Futures public, no keys needed) ----------------
+_PUBLIC = [None]   # cached keyless ccxt.krakenfutures client for market data
+
+
+def _public_kraken():
+    if _PUBLIC[0] is None:
+        import ccxt
+        ex = ccxt.krakenfutures({"enableRateLimit": True})
+        ex.load_markets()
+        _PUBLIC[0] = ex
+    return _PUBLIC[0]
+
+
+def fetch_klines(symbol=DATA_SYMBOL, interval=INTERVAL, n_bars=WARMUP_BARS):
+    """Fetch the last n_bars CLOSED 1h klines from Kraken Futures (public). Returns OHLCV df.
+    Kraken returns up to ~2000 bars in one call, so no pagination needed for the warm-up window."""
+    ex = _public_kraken()
+    tf_ms = 3_600_000
+    now_ms = ex.milliseconds()
+    batch = ex.fetch_ohlcv(symbol, timeframe=interval, limit=n_bars + 50)
     recs = []
-    for k in sorted(out):
-        close_time = int(k if False else out[k][6])  # ms
-        if close_time >= now_ms:
-            continue                                  # drop the in-progress bar
-        recs.append((int(out[k][0]), float(out[k][1]), float(out[k][2]),
-                     float(out[k][3]), float(out[k][4]), float(out[k][5])))
+    for r in batch:
+        ts = int(r[0])
+        if ts + tf_ms > now_ms:                       # drop the in-progress bar
+            continue
+        recs.append((ts, float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5] or 0.0)))
     recs = recs[-n_bars:]
     df = pd.DataFrame(recs, columns=["t", "Open", "High", "Low", "Close", "Volume"])
     df["Date"] = pd.to_datetime(df["t"], unit="ms")
     return df.set_index("Date").drop(columns="t")
 
 
-def fetch_funding(symbol=SYMBOL, limit=50):
-    """Recent SETTLED perp funding rates: list of (fundingTime_ms, rate). Empty on failure."""
+def fetch_funding(symbol=DATA_SYMBOL, limit=50):
+    """Recent SETTLED Kraken perp funding rates: list of (fundingTime_ms, rate). Empty on failure."""
     try:
-        with urllib.request.urlopen(f"{FUNDING_URL}?symbol={symbol}&limit={limit}", timeout=30) as r:
-            rows = json.loads(r.read())
-        return [(int(x["fundingTime"]), float(x["fundingRate"])) for x in rows]
+        rows = _public_kraken().fetch_funding_rate_history(symbol, limit=limit)
+        return [(int(r["timestamp"]), float(r["fundingRate"])) for r in rows]
     except Exception as e:
         print(f"[funding] fetch failed ({e}); skipping funding this cycle")
         return []
@@ -113,9 +112,9 @@ def log_row(row):
     pd.DataFrame([row]).to_csv(LOG_FILE, mode="a", header=hdr, index=False)
 
 
-# ---------------- live execution (optional, --live) ----------------
-# exchange connection lives in ccxt_exchanges.py (Binance USDT-M futures, REAL money);
-# the symbol is returned from there. Order placement below is exchange-agnostic ccxt.
+# ---------------- exchange execution (optional, --testnet / --live) ----------------
+# exchange connection lives in ccxt_exchanges.py (Kraken Futures: demo, or real perp futures);
+# the symbol + market_type are returned from there. Order placement below is exchange-agnostic ccxt.
 MIN_ORDER_USD = 5.0                 # skip orders smaller than this notional
 SECRETS_FILE  = "secrets.env"       # KEY=VALUE lines; git-ignored; never commit
 
@@ -143,14 +142,25 @@ def load_secrets(path=SECRETS_FILE):
 
 
 def _position_and_equity(ex, symbol, market_type):
-    """Current BTC position (signed) + USDT-value equity, for spot or swap."""
+    """Current BTC position (signed) + settle-currency equity, for spot or swap.
+    Settle currency is read from the market (USD on Kraken futures)."""
     bal = ex.fetch_balance()
     if market_type == "spot":
         base = symbol.split("/")[0]                       # BTC
         btc = float(bal.get(base, {}).get("free") or 0.0)
         usdt = float(bal.get("USDT", {}).get("free") or 0.0)
         return btc, usdt + btc * _last_price_hint[0]      # equity = USDT + BTC value
-    equity = float(bal.get("USDT", {}).get("total") or 0.0)
+    settle = "USDT"
+    try:
+        settle = ex.market(symbol).get("settle") or "USDT"
+    except Exception:
+        pass
+    equity = float(bal.get(settle, {}).get("total")
+                   or bal.get("USDT", {}).get("total") or 0.0)
+    if equity == 0.0:                                     # fall back to any USD-like collateral
+        tot = bal.get("total") or {}
+        cands = [float(tot[c]) for c in ("USD", "USDT", "USDC") if tot.get(c)]
+        equity = max(cands) if cands else 0.0
     pos = 0.0
     for p in ex.fetch_positions([symbol]):
         if p.get("symbol") == symbol and p.get("contracts"):
@@ -179,13 +189,14 @@ def exec_to_target(ex, symbol, market_type, target_exp, price):
     amt = ex.amount_to_precision(symbol, abs(delta))
     if float(amt) <= 0:
         return out
+    tag = "LIVE" if market_type == "swap" else "demo"    # swap = real futures; spot = testnet
     try:
         o = ex.create_order(symbol, "market", side, amt)
         out["order"] = f"{side} {amt} @market (id {o.get('id')})"
-        print(f"[LIVE] ORDER {side} {amt} BTC  (~${notional:.0f})")
+        print(f"[{tag}] ORDER {side} {amt} BTC  (~${notional:.0f})")
     except Exception as e:
         out["order"] = f"FAILED: {e}"
-        print(f"[LIVE] order FAILED: {e}")
+        print(f"[{tag}] order FAILED: {e}")
     return out
 
 
@@ -226,7 +237,7 @@ def run_once(basket, exchange=None, symbol=None, market_type=None):
     order_qty = order_usd / close
     cum_ret = st["equity"] / START_EQUITY - 1.0
 
-    # LIVE: place a REAL order on Binance futures to move to the target exposure (only if --live)
+    # LIVE: place a REAL order on Kraken futures to move to the target exposure (only if --live)
     tn = exec_to_target(exchange, symbol, market_type, target, close) if exchange is not None else None
 
     row = {
@@ -275,25 +286,30 @@ def main():
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--once", action="store_true")
     g.add_argument("--loop", action="store_true")
-    ap.add_argument("--live", action="store_true",
-                    help="place REAL orders on Binance USDT-M futures (REAL MONEY)")
+    g2 = ap.add_mutually_exclusive_group()
+    g2.add_argument("--testnet", action="store_true",
+                    help="Kraken futures DEMO orders (shorts+leverage, no real money)")
+    g2.add_argument("--live", action="store_true",
+                    help="place REAL orders on Kraken futures (REAL MONEY)")
     a = ap.parse_args()
 
-    load_secrets()      # always: loads EMAIL_* / ANTHROPIC_API_KEY (+ exchange keys) into env
+    load_secrets()      # always: loads EMAIL_* / ANTHROPIC_API_KEY (+ Kraken keys) into env
     exchange = symbol = market_type = None
-    if a.live:
-        if os.environ.get("LIVE_CONFIRM", "").strip().upper() != "YES":
-            raise SystemExit("--live refused: set LIVE_CONFIRM=YES in secrets.env to enable REAL "
-                             "Binance-futures trading (real money).")
+    if a.testnet or a.live:
         import ccxt_exchanges
         lev = max(1, int(round(ps.MAX_LEVERAGE)))
-        print("=" * 60)
-        print("  !!!  LIVE TRADING ON BINANCE USDT-M FUTURES - REAL MONEY  !!!")
-        print("=" * 60)
-        exchange, symbol, market_type = ccxt_exchanges.make_binance_futures(lev)
+        if a.live:
+            if os.environ.get("LIVE_CONFIRM", "").strip().upper() != "YES":
+                raise SystemExit("--live refused: set LIVE_CONFIRM=YES in secrets.env to enable "
+                                 "REAL Kraken-futures trading (real money).")
+            print("=" * 60)
+            print("  !!!  LIVE TRADING ON KRAKEN FUTURES - REAL MONEY  !!!")
+            print("=" * 60)
+        exchange, symbol, market_type = ccxt_exchanges.make_kraken(lev, demo=not a.live)
 
     basket = load_basket()
-    mode = "LIVE Binance futures (REAL orders)" if exchange is not None else "PAPER (no orders)"
+    mode = ("PAPER (no orders)" if exchange is None else
+            f"Kraken {'LIVE (REAL orders)' if a.live else 'DEMO'} ({market_type})")
     print(f"loaded basket of {len(basket)} strategies | target_vol {ps.TARGET_ANN_VOL} "
           f"| leverage {ps.LEVERAGE}x | max_lev {ps.MAX_LEVERAGE} | "
           f"trend filter {ps.USE_TREND}(MA{ps.MA_WIN}) | funding {APPLY_FUNDING} | {mode}")

@@ -1,5 +1,5 @@
 """
-Offline simulator that exercises EVERY monitoring path without Binance, live bars, or waiting.
+Offline simulator that exercises EVERY monitoring path without an exchange, live bars, or waiting.
 
 It drives notifier / monitor / claude_review (and a tiny mock exchange) through each situation so
 you can confirm the alert emails look right and actually arrive. No network, no strategy compute.
@@ -8,7 +8,7 @@ Scenarios (--scenario):
     startup    'Trader started' email
     profit     a winning TRADE email  (balance up, +last-trade P&L)
     loss       a losing TRADE email   (balance down, -last-trade P&L)
-    order      a trade routed through a MOCK Binance futures exchange (real order description)
+    order      a trade routed through a MOCK Kraken futures exchange (real order description)
     orderfail  a mock exchange order that FAILS (shows it does NOT send a false trade email)
     error      an ERROR email         (simulated run_once exception, e.g. a network drop)
     crash      a CRASH email          (simulated fatal exit)
@@ -80,7 +80,7 @@ def _hdr(name, desc):
 class MockExchange:
     """Minimal ccxt-like swap account - just enough to look like a real fill/failure."""
     def __init__(self, equity=10_000.0, pos=0.0, fail=False):
-        self.equity, self.pos, self.fail, self.id = equity, pos, fail, "mock-binance"
+        self.equity, self.pos, self.fail, self.id = equity, pos, fail, "mock-kraken"
 
     def amount_to_precision(self, symbol, amt):
         return f"{float(amt):.3f}"
@@ -95,7 +95,7 @@ class MockExchange:
 # ----------------------------- scenarios -----------------------------
 def sc_startup(_):
     _hdr("startup", "trader-started email")
-    monitor.on_start("MOCK LIVE (binance futures / swap)")
+    monitor.on_start("MOCK LIVE (kraken futures / swap)")
 
 
 def sc_profit(_):
@@ -146,7 +146,7 @@ def sc_orderfail(_):
 def sc_error(_):
     _hdr("error", "ERROR email (simulated run_once exception)")
     try:
-        raise ConnectionError("Binance kline fetch timed out (mock)")
+        raise ConnectionError("Kraken kline fetch timed out (mock)")
     except Exception as e:
         monitor.on_error(e, "run_once (mock)")
 

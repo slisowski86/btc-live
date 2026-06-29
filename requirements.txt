@@ -6,6 +6,6 @@ TA-Lib==0.6.8
 plotly
 tqdm
 matplotlib
-ccxt             # Binance USDT-M futures live order execution (paper_trader.py --live)
+ccxt             # Kraken Futures data + order execution (paper_trader --testnet/--live, test_connection.py)
 ipykernel        # so the env can be used as a Jupyter kernel
 anthropic        # daily Claude strategy review in the email summary (claude_review.py)
