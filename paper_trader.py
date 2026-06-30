@@ -117,6 +117,12 @@ def log_row(row):
 # the symbol + market_type are returned from there. Order placement below is exchange-agnostic ccxt.
 MIN_ORDER_USD = 5.0                 # skip orders smaller than this notional
 SECRETS_FILE  = "secrets.env"       # KEY=VALUE lines; git-ignored; never commit
+# Catastrophe stop: a WIDE resting reduce-only stop at the exchange, as a disconnect / flash-crash
+# backstop only. Sized far beyond the strategy's normal adverse excursions (worst-ever trade was
+# ~8% of equity at 1x over 7.5y), so it ~never fires in normal operation - it just caps a disaster
+# if the bot dies while holding a leveraged position. Auto-scales with protected_strategy.LEVERAGE.
+USE_CATASTROPHE_STOP = True
+STOP_EQUITY_FRAC     = 0.15         # stop at ~ this fraction of equity (at 1x leverage)
 
 
 def _clean_secret_value(v):
@@ -216,6 +222,42 @@ def exec_to_target(ex, symbol, market_type, target_exp, price):
     return out
 
 
+def sync_catastrophe_stop(ex, symbol, exposure, equity, price):
+    """Place/refresh a WIDE resting reduce-only stop at the exchange (disconnect/flash-crash backstop).
+    The stop sits ~STOP_EQUITY_FRAC*LEVERAGE of equity away, translated to a price level via the
+    current exposure. Best-effort: logs and returns on any error, never raises (a stop problem must
+    not break the trader). Re-placed each cycle so it tracks the live position; cancelled when flat."""
+    try:
+        for o in (ex.fetch_open_orders(symbol) or []):       # clear old protective orders so they don't stack
+            is_stop = (o.get("stopPrice") or o.get("triggerPrice") or o.get("reduceOnly")
+                       or str(o.get("type", "")).lower().startswith("stop"))
+            if is_stop:
+                try:
+                    ex.cancel_order(o["id"], symbol)
+                except Exception:
+                    pass
+        if abs(exposure) < 1e-9 or equity <= 0 or price <= 0:
+            return None                                       # flat -> no stop
+        frac    = STOP_EQUITY_FRAC * max(1.0, getattr(ps, "LEVERAGE", 1.0))
+        adverse = min(frac / abs(exposure), 0.90)             # price move that loses 'frac' of equity
+        if exposure > 0:
+            stop_price, side = price * (1.0 - adverse), "sell"
+        else:
+            stop_price, side = price * (1.0 + adverse), "buy"
+        amt = ex.amount_to_precision(symbol, abs(exposure) * equity / price)
+        if float(amt) <= 0:
+            return None
+        stop_price = float(ex.price_to_precision(symbol, stop_price))
+        ex.create_order(symbol, "market", side, amt, None,
+                        {"stopLossPrice": stop_price, "reduceOnly": True})
+        msg = f"{side} {amt} stop @ {stop_price:,.0f} (~-{frac*100:.0f}% equity)"
+        print(f"[stop] catastrophe stop set: {msg}")
+        return msg
+    except Exception as e:
+        print(f"[stop] could not set catastrophe stop: {e}")
+        return None
+
+
 def run_once(basket, exchange=None, symbol=None, market_type=None):
     df = fetch_klines()
     bar_time = str(df.index[-1])
@@ -255,6 +297,9 @@ def run_once(basket, exchange=None, symbol=None, market_type=None):
 
     # LIVE: place a REAL order on Kraken futures to move to the target exposure (only if --live)
     tn = exec_to_target(exchange, symbol, market_type, target, close) if exchange is not None else None
+    if tn is not None and market_type == "swap" and USE_CATASTROPHE_STOP:
+        stop_eq = tn["equity"] if tn.get("equity") is not None else st["equity"]
+        sync_catastrophe_stop(exchange, symbol, target, stop_eq, close)
 
     row = {
         "bar_time": bar_time, "close": round(close, 2),
