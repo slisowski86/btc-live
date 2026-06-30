@@ -274,10 +274,15 @@ def run_once(basket, exchange=None, symbol=None, market_type=None):
     log_row(row)
     fund_note = f"  funding {fund_impact*100:+.3f}%" if fund_impact != 0.0 else ""
     flag = "  [TREND-OFF: longs flattened]" if d["risk_off"] and d["raw"] > 0 else ""
+    # show the REAL account balance when trading on an exchange; paper equity otherwise
+    if tn is not None and tn.get("equity") is not None:
+        eq_txt = f"balance {tn['equity']:.2f} USD (strat {cum_ret:+.1%})"
+    else:
+        eq_txt = f"equity {st['equity']:.0f} ({cum_ret:+.1%})"
     print(f"[{dt.datetime.now():%H:%M:%S}] {bar_time}  close {close:.0f}  "
           f"net {d['raw']:+.2f} (L{d['n_long']}/S{d['n_short']}/F{d['n_flat']})  "
           f"-> exposure {target:+.2f}  {row['order_side']} {abs(order_qty):.4f}BTC  "
-          f"equity {st['equity']:.0f} ({cum_ret:+.1%}){fund_note}{flag}")
+          f"{eq_txt}{fund_note}{flag}")
 
     # ---- live monitoring + email alerts (trade / daily summary / heartbeat) ----
     if tn is not None:                                   # on an exchange (testnet/real)
