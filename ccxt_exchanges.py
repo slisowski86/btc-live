@@ -18,13 +18,19 @@ import os
 
 
 def _balance(ex, ccys=("USD", "USDT", "USDC")):
-    """Best-effort account equity: first non-zero of the given settle currencies."""
+    """Best-effort USD account equity. Handles multi-collateral (Kraken 'flex' holding EUR etc.)
+    by reading the USD margin-equity, so the displayed balance matches what the bot trades against."""
     try:
         b = ex.fetch_balance()
         for c in ccys:
             t = b.get(c, {}).get("total")
             if t:
                 return float(t), c
+        flex = ((b.get("info") or {}).get("accounts") or {}).get("flex") or {}
+        for k in ("marginEquity", "portfolioValue", "balanceValue"):
+            v = flex.get(k)
+            if v not in (None, "", "0", "0.0"):
+                return float(v), "USD"
         tot = b.get("total") or {}
         cands = [(float(tot[c]), c) for c in ccys if tot.get(c)]
         if cands:

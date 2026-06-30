@@ -26,6 +26,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=$USER_NAME
+Environment=PYTHONUNBUFFERED=1
 WorkingDirectory=$PROJECT_DIR
 ExecStart=$PYTHON paper_trader.py $RUN_ARGS
 Restart=always
@@ -47,6 +48,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=$USER_NAME
+Environment=PYTHONUNBUFFERED=1
 WorkingDirectory=$PROJECT_DIR
 ExecStart=$PYTHON watchdog.py --loop --interval-min 15
 Restart=always
