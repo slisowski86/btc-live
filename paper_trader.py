@@ -141,9 +141,27 @@ def load_secrets(path=SECRETS_FILE):
         os.environ.setdefault(k.strip(), _clean_secret_value(v))
 
 
+def _usd_account_equity(bal):
+    """USD-denominated account equity for multi-collateral accounts (e.g. Kraken 'flex' holding
+    EUR/USDC/etc.): reads the exchange's USD margin-equity. Falls back to summing USD stablecoins.
+    Used when the plain settle-currency balance reads 0 (collateral isn't held as USD/USDT/USDC)."""
+    try:
+        flex = ((bal.get("info") or {}).get("accounts") or {}).get("flex") or {}
+        for k in ("marginEquity", "portfolioValue", "balanceValue", "collateralValue"):
+            v = flex.get(k)
+            if v not in (None, "", "0", "0.0"):
+                return float(v)
+    except Exception:
+        pass
+    tot = bal.get("total") or {}
+    cands = [float(tot[c]) for c in ("USD", "USDT", "USDC") if tot.get(c)]
+    return max(cands) if cands else 0.0
+
+
 def _position_and_equity(ex, symbol, market_type):
     """Current BTC position (signed) + settle-currency equity, for spot or swap.
-    Settle currency is read from the market (USD on Kraken futures)."""
+    Settle currency is read from the market (USD on Kraken futures); for multi-collateral
+    accounts (EUR collateral) the USD margin-equity is used instead."""
     bal = ex.fetch_balance()
     if market_type == "spot":
         base = symbol.split("/")[0]                       # BTC
@@ -157,10 +175,8 @@ def _position_and_equity(ex, symbol, market_type):
         pass
     equity = float(bal.get(settle, {}).get("total")
                    or bal.get("USDT", {}).get("total") or 0.0)
-    if equity == 0.0:                                     # fall back to any USD-like collateral
-        tot = bal.get("total") or {}
-        cands = [float(tot[c]) for c in ("USD", "USDT", "USDC") if tot.get(c)]
-        equity = max(cands) if cands else 0.0
+    if equity == 0.0:                                     # multi-collateral (e.g. Kraken EUR) / fallback
+        equity = _usd_account_equity(bal)
     pos = 0.0
     for p in ex.fetch_positions([symbol]):
         if p.get("symbol") == symbol and p.get("contracts"):

@@ -72,6 +72,11 @@ def main():
                 print(f"            {c} total {v:,.4f}")
         else:
             print("            (no non-zero balance - the futures wallet looks unfunded)")
+        flex = ((bal.get("info") or {}).get("accounts") or {}).get("flex") or {}
+        me = flex.get("marginEquity") or flex.get("portfolioValue")
+        if me:
+            print(f"            USD account equity {float(me):,.2f}  "
+                  f"(multi-collateral; the bot sizes against this)")
     except ccxt.AuthenticationError as e:
         sys.exit(f"FAIL: authentication error - bad/disabled key or secret: {e}")
     except ccxt.PermissionDenied as e:
